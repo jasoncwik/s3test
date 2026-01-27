@@ -48,6 +48,18 @@ public class GetObjectTests extends S3TestBase {
     }
 
     @Test
+    public void testGetEmptyObject() throws IOException {
+        var emptyContent = "";
+        bucket.putObject("empty", emptyContent);
+
+        try (var objectInputStream = bucket.getObject("empty")) {
+            var bytes = objectInputStream.readAllBytes();
+            assertEquals(0, bytes.length);
+            assertEquals(Long.valueOf(0L), objectInputStream.response().contentLength());
+        }
+    }
+
+    @Test
     public void testGetKeyThatDoesNotExist() throws IOException {
         try (var objectInputStream = bucket.getObject("foo")) {
             fail("Should return HTTP 404");
@@ -87,6 +99,79 @@ public class GetObjectTests extends S3TestBase {
             fail("Should return HTTP 416");
         } catch (S3Exception e) {
             assertEquals(416, e.statusCode());
+        }
+    }
+
+    @Test
+    public void testGetPartialWithEndPosition() throws IOException {
+        var fullContent = "Hello, World!";
+        bucket.putObject("foo", fullContent);
+
+        var startPos = 0L;
+        var endPos = 4L;
+
+        var range = new Range("bytes", ImmutableList.of(new RangeSpec(startPos, endPos)));
+        var contentRange = new ContentRange("bytes", startPos, endPos, (long) fullContent.length());
+
+        try (var objectInputStream = bucket.getObject("foo", null, range)) {
+            var bytes = objectInputStream.readAllBytes();
+            assertEquals("Hello", new String(bytes, StandardCharsets.UTF_8));
+
+            var response = objectInputStream.response();
+            assertEquals(contentRange.toString(), response.contentRange());
+            assertEquals(Long.valueOf(endPos - startPos + 1), response.contentLength());
+        }
+    }
+
+    @Test
+    public void testGetPartialMiddleRange() throws IOException {
+        var fullContent = "Hello, World!";
+        bucket.putObject("foo", fullContent);
+
+        var startPos = 7L;
+        var endPos = 11L;
+
+        var range = new Range("bytes", ImmutableList.of(new RangeSpec(startPos, endPos)));
+        var contentRange = new ContentRange("bytes", startPos, endPos, (long) fullContent.length());
+
+        try (var objectInputStream = bucket.getObject("foo", null, range)) {
+            var bytes = objectInputStream.readAllBytes();
+            assertEquals("World", new String(bytes, StandardCharsets.UTF_8));
+
+            var response = objectInputStream.response();
+            assertEquals(contentRange.toString(), response.contentRange());
+            assertEquals(Long.valueOf(endPos - startPos + 1), response.contentLength());
+        }
+    }
+
+    @Test
+    public void testGetPartialLastBytes() throws IOException {
+        var fullContent = "Hello, World!";
+        bucket.putObject("foo", fullContent);
+
+        // Get last 6 bytes using suffix-length range
+        var range = new Range("bytes", ImmutableList.of(new RangeSpec(null, 6L)));
+
+        try (var objectInputStream = bucket.getObject("foo", null, range)) {
+            var bytes = objectInputStream.readAllBytes();
+            assertEquals("World!", new String(bytes, StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    public void testGetPartialBeyondEnd() throws IOException {
+        var fullContent = "Hello, World!";
+        bucket.putObject("foo", fullContent);
+
+        var startPos = 10L;
+        var endPos = 100L; // Beyond actual content
+
+        var range = new Range("bytes", ImmutableList.of(new RangeSpec(startPos, endPos)));
+
+        try (var objectInputStream = bucket.getObject("foo", null, range)) {
+            var bytes = objectInputStream.readAllBytes();
+            // Should return from startPos to end of file
+            assertEquals("ld!", new String(bytes, StandardCharsets.UTF_8));
         }
     }
 }
