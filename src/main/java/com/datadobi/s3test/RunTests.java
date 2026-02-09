@@ -34,7 +34,9 @@ import org.junit.runner.manipulation.NoTestsRemainException;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
 import org.junit.runners.BlockJUnit4ClassRunner;
+import org.junit.runners.model.FrameworkMethod;
 import org.junit.runners.model.InitializationError;
+import org.junit.runners.model.Statement;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -107,11 +109,36 @@ public class RunTests {
         classes.add(PrefixDelimiterTests.class);
         classes.add(PutObjectTests.class);
 
+        FileLogger fileLogger = logPath != null ? new FileLogger(logPath) : null;
+
         JUnitCore junit = new JUnitCore();
-        junit.addListener(new TextListener(logPath));
+        junit.addListener(new TextListener(fileLogger));
 
         for (Class<?> c : classes) {
-            BlockJUnit4ClassRunner runner = new BlockJUnit4ClassRunner(c);
+            BlockJUnit4ClassRunner runner = new BlockJUnit4ClassRunner(c) {
+                @Override
+                protected Statement methodInvoker(FrameworkMethod method, Object test) {
+                    Statement invoker = super.methodInvoker(method, test);
+
+                    return new Statement() {
+                        @Override
+                        public void evaluate() throws Throwable {
+                            if (fileLogger != null) {
+                                fileLogger.startWireLogging(method.getDeclaringClass(), method.getName());
+                            }
+
+                            try {
+                                invoker.evaluate();
+                            } finally {
+                                if (fileLogger != null) {
+                                    fileLogger.stopWireLogging();
+                                }
+                            }
+
+                        }
+                    };
+                }
+            };
 
             try {
                 runner.filter(new Filter() {
@@ -143,25 +170,65 @@ public class RunTests {
         }
     }
 
+    private static class FileLogger {
+        private final Path logPath;
+        private @Nullable Configuration previousConfiguration;
+
+        public FileLogger(Path logPath) {
+            this.logPath = logPath;
+        }
+
+        private Path logPath(Class<?> testClass, String methodName) throws IOException {
+            Path path = logPath.resolve(testClass.getSimpleName()).resolve(methodName);
+            return Files.createDirectories(path);
+        }
+
+        public void startWireLogging(Class<?> testClass, String methodName) throws IOException {
+            Path path = logPath(testClass, methodName);
+            Path logPath = Files.createDirectories(path);
+            ConfigurationBuilder<BuiltConfiguration> configBuilder =
+                    ConfigurationBuilderFactory.newConfigurationBuilder();
+            Configuration configuration = configBuilder
+                    .add(configBuilder
+                            .newAppender("wire", "File")
+                            .addAttribute("fileName", logPath.resolve("wire.log"))
+                            .add(configBuilder.newLayout("PatternLayout").addAttribute("pattern", "%m%n")))
+                    .add(configBuilder.newRootLogger(Level.OFF))
+                    .add(configBuilder.newLogger("org.apache.http.wire")
+                            .addAttribute("level", Level.DEBUG)
+                            .add(configBuilder.newAppenderRef("wire")))
+                    .build(false);
+
+            previousConfiguration = LoggerContext.getContext().getConfiguration();
+            Configurator.reconfigure(configuration);
+        }
+
+        public void stopWireLogging() {
+            if (previousConfiguration != null) {
+                Configurator.reconfigure(previousConfiguration);
+            }
+        }
+
+        public void writeErrorLog(Class<?> testClass, String methodName, Failure failure) throws IOException {
+            Path logPath = logPath(testClass, methodName);
+            Files.writeString(
+                    logPath.resolve("error.log"),
+                    failure.getTrace(),
+                    StandardCharsets.UTF_8
+            );
+        }
+    }
+
     private static class TextListener extends RunListener {
         private final PrintStream stdOut;
-        private final Path logPath;
+        private final @Nullable FileLogger fileLogger;
         private Failure failure;
         private boolean ignored;
         private Configuration previousConfiguration;
 
-        public TextListener(@Nullable Path logPath) {
-            this.logPath = logPath;
+        public TextListener(@Nullable FileLogger fileLogger) {
+            this.fileLogger = fileLogger;
             stdOut = System.out;
-        }
-
-        private @Nullable Path testLogPath(Description description) throws IOException {
-            if (logPath == null) {
-                return null;
-            }
-
-            Path path = logPath.resolve(description.getTestClass().getSimpleName()).resolve(description.getMethodName());
-            return Files.createDirectories(path);
         }
 
         @Override
@@ -173,25 +240,6 @@ public class RunTests {
             stdOut.append("  " + description.getMethodName());
             failure = null;
             ignored = false;
-
-            Path logPath = testLogPath(description);
-            if (logPath != null) {
-                ConfigurationBuilder<BuiltConfiguration> configBuilder =
-                        ConfigurationBuilderFactory.newConfigurationBuilder();
-                Configuration configuration = configBuilder
-                        .add(configBuilder
-                                .newAppender("wire", "File")
-                                .addAttribute("fileName", logPath.resolve("wire.log"))
-                                .add(configBuilder.newLayout("PatternLayout").addAttribute("pattern", "%m%n")))
-                        .add(configBuilder.newRootLogger(Level.OFF))
-                        .add(configBuilder.newLogger("org.apache.http.wire")
-                                .addAttribute("level", Level.DEBUG)
-                                .add(configBuilder.newAppenderRef("wire")))
-                        .build(false);
-
-                previousConfiguration = LoggerContext.getContext().getConfiguration();
-                Configurator.reconfigure(configuration);
-            }
         }
 
         public void testFailure(Failure failure) {
@@ -208,22 +256,13 @@ public class RunTests {
                 stdOut.println(" 🙈");
             } else if (failure != null) {
                 stdOut.println(" ❌");
-                Path logPath = testLogPath(description);
-                if (logPath != null) {
-                    Files.writeString(
-                            logPath.resolve("error.log"),
-                            failure.getTrace(),
-                            StandardCharsets.UTF_8
-                    );
+                if (fileLogger != null) {
+                    fileLogger.writeErrorLog(description.getTestClass(), description.getMethodName(), failure);
                 } else {
                     stdOut.println(failure.getTrimmedTrace());
                 }
             } else {
                 stdOut.println(" ✅");
-            }
-
-            if (previousConfiguration != null) {
-                Configurator.reconfigure(previousConfiguration);
             }
         }
     }
