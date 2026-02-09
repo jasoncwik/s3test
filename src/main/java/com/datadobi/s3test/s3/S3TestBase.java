@@ -18,15 +18,19 @@
  */
 package com.datadobi.s3test.s3;
 
-import org.apache.logging.log4j.LogManager;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
+import org.junit.rules.TestWatcher;
+import org.junit.runner.Description;
 import software.amazon.awssdk.services.s3.S3Client;
 
 import java.io.IOException;
+import java.nio.file.Path;
 
 public class S3TestBase {
     public static ServiceDefinition DEFAULT;
+    public static WireLogger WIRE_LOGGER;
 
     static {
         String testUri = System.getenv("S3TEST_URI");
@@ -37,7 +41,20 @@ public class S3TestBase {
                 throw new RuntimeException(e);
             }
         }
+
+        String wireLogPath = System.getenv("S3TEST_WIRELOG");
+        WIRE_LOGGER = new WireLogger(wireLogPath == null ? null : Path.of(wireLogPath));
     }
+
+    private Description currentTest;
+
+    @Rule
+    public TestWatcher testName = new TestWatcher() {
+        @Override
+        protected void starting(Description description) {
+            S3TestBase.this.currentTest = description;
+        }
+    };
 
     protected final ServiceDefinition target;
     protected S3Client s3;
@@ -59,10 +76,14 @@ public class S3TestBase {
         if (target.createBucket()) {
             bucket.create();
         }
+
+        WIRE_LOGGER.start(currentTest);
     }
 
     @After
-    public final void tearDown() throws IOException {
+    public final void tearDown() {
+        WIRE_LOGGER.stop();
+
         S3.clearBucket(s3, target.bucket());
         if (target.createBucket()) {
             bucket.delete();

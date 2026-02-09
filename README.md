@@ -31,3 +31,11 @@ Individual test cases can be explictly included or excluded using the `-i`/`--in
 
 Since each test is a JUnit test case, tests can be easily executed from your IDE of choice.
 Instructions on how to run JUnit tests from IDEs is out of scope for this README.
+
+## Logging HTTP Requests
+
+When tests are run using the `RunTests` harness, the command line flag `-l`/`--log` can be used to specify a target path for HTTP request logs.
+
+Alternatively, the environment variable `S3TEST_WIRELOG` can be set to a path to enable HTTP request logging.
+
+If both the command line flag and environment variable are set, the command line flag takes precedence.

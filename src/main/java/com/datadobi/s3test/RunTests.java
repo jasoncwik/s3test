@@ -20,13 +20,7 @@ package com.datadobi.s3test;
 
 import com.datadobi.s3test.s3.S3TestBase;
 import com.datadobi.s3test.s3.ServiceDefinition;
-import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.core.LoggerContext;
-import org.apache.logging.log4j.core.config.Configuration;
-import org.apache.logging.log4j.core.config.Configurator;
-import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilder;
-import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory;
-import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
+import com.datadobi.s3test.s3.WireLogger;
 import org.junit.runner.Description;
 import org.junit.runner.JUnitCore;
 import org.junit.runner.manipulation.Filter;
@@ -34,9 +28,7 @@ import org.junit.runner.manipulation.NoTestsRemainException;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
 import org.junit.runners.BlockJUnit4ClassRunner;
-import org.junit.runners.model.FrameworkMethod;
 import org.junit.runners.model.InitializationError;
-import org.junit.runners.model.Statement;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -50,15 +42,6 @@ import java.util.regex.Pattern;
 
 public class RunTests {
     public static void main(String[] args) throws InitializationError, IOException {
-        ConfigurationBuilder<BuiltConfiguration> configBuilder =
-                ConfigurationBuilderFactory.newConfigurationBuilder();
-        Configurator.initialize(configBuilder
-                .add(configBuilder.newRootLogger(Level.OFF))
-                .add(configBuilder.newLogger("org.apache.http.wire")
-                        .addAttribute("level", Level.DEBUG))
-                .build(false));
-
-
         List<Pattern> include = new ArrayList<>();
         List<Pattern> exclude = new ArrayList<>();
         Path logPath = null;
@@ -70,12 +53,10 @@ public class RunTests {
                 break;
             }
 
-            if (arg.equals("-e") || arg.equals("--exclude")) {
-                exclude.add(Pattern.compile(args[++i]));
-            } else if (arg.equals("-i") || arg.equals("--include")) {
-                include.add(Pattern.compile(args[++i]));
-            } else if (arg.equals("-l") || arg.equals("--log")) {
-                logPath = Path.of(args[++i]);
+            switch (arg) {
+                case "-e", "--exclude" -> exclude.add(Pattern.compile(args[++i]));
+                case "-i", "--include" -> include.add(Pattern.compile(args[++i]));
+                case "-l", "--log" -> logPath = Path.of(args[++i]);
             }
         }
 
@@ -88,7 +69,7 @@ public class RunTests {
             System.exit(1);
         }
 
-        var target = ServiceDefinition.fromURI(args[i++]);
+        var target = ServiceDefinition.fromURI(args[i]);
 
         S3TestBase.DEFAULT = target;
 
@@ -109,36 +90,15 @@ public class RunTests {
         classes.add(PrefixDelimiterTests.class);
         classes.add(PutObjectTests.class);
 
-        FileLogger fileLogger = logPath != null ? new FileLogger(logPath) : null;
+        if (logPath != null) {
+            S3TestBase.WIRE_LOGGER = new WireLogger(logPath);
+        }
 
         JUnitCore junit = new JUnitCore();
-        junit.addListener(new TextListener(fileLogger));
+        junit.addListener(new TextListener(logPath));
 
         for (Class<?> c : classes) {
-            BlockJUnit4ClassRunner runner = new BlockJUnit4ClassRunner(c) {
-                @Override
-                protected Statement methodInvoker(FrameworkMethod method, Object test) {
-                    Statement invoker = super.methodInvoker(method, test);
-
-                    return new Statement() {
-                        @Override
-                        public void evaluate() throws Throwable {
-                            if (fileLogger != null) {
-                                fileLogger.startWireLogging(method.getDeclaringClass(), method.getName());
-                            }
-
-                            try {
-                                invoker.evaluate();
-                            } finally {
-                                if (fileLogger != null) {
-                                    fileLogger.stopWireLogging();
-                                }
-                            }
-
-                        }
-                    };
-                }
-            };
+            BlockJUnit4ClassRunner runner = new BlockJUnit4ClassRunner(c);
 
             try {
                 runner.filter(new Filter() {
@@ -170,74 +130,24 @@ public class RunTests {
         }
     }
 
-    private static class FileLogger {
-        private final Path logPath;
-        private @Nullable Configuration previousConfiguration;
-
-        public FileLogger(Path logPath) {
-            this.logPath = logPath;
-        }
-
-        private Path logPath(Class<?> testClass, String methodName) throws IOException {
-            Path path = logPath.resolve(testClass.getSimpleName()).resolve(methodName);
-            return Files.createDirectories(path);
-        }
-
-        public void startWireLogging(Class<?> testClass, String methodName) throws IOException {
-            Path path = logPath(testClass, methodName);
-            Path logPath = Files.createDirectories(path);
-            ConfigurationBuilder<BuiltConfiguration> configBuilder =
-                    ConfigurationBuilderFactory.newConfigurationBuilder();
-            Configuration configuration = configBuilder
-                    .add(configBuilder
-                            .newAppender("wire", "File")
-                            .addAttribute("fileName", logPath.resolve("wire.log"))
-                            .add(configBuilder.newLayout("PatternLayout").addAttribute("pattern", "%m%n")))
-                    .add(configBuilder.newRootLogger(Level.OFF))
-                    .add(configBuilder.newLogger("org.apache.http.wire")
-                            .addAttribute("level", Level.DEBUG)
-                            .add(configBuilder.newAppenderRef("wire")))
-                    .build(false);
-
-            previousConfiguration = LoggerContext.getContext().getConfiguration();
-            Configurator.reconfigure(configuration);
-        }
-
-        public void stopWireLogging() {
-            if (previousConfiguration != null) {
-                Configurator.reconfigure(previousConfiguration);
-            }
-        }
-
-        public void writeErrorLog(Class<?> testClass, String methodName, Failure failure) throws IOException {
-            Path logPath = logPath(testClass, methodName);
-            Files.writeString(
-                    logPath.resolve("error.log"),
-                    failure.getTrace(),
-                    StandardCharsets.UTF_8
-            );
-        }
-    }
-
     private static class TextListener extends RunListener {
         private final PrintStream stdOut;
-        private final @Nullable FileLogger fileLogger;
+        private final @Nullable Path logPath;
         private Failure failure;
         private boolean ignored;
-        private Configuration previousConfiguration;
 
-        public TextListener(@Nullable FileLogger fileLogger) {
-            this.fileLogger = fileLogger;
+        public TextListener(@Nullable Path logPath) {
+            this.logPath = logPath;
             stdOut = System.out;
         }
 
         @Override
-        public void testRunStarted(Description description) throws Exception {
+        public void testRunStarted(Description description) {
             stdOut.println("Running " + description);
         }
 
-        public void testStarted(Description description) throws Exception {
-            stdOut.append("  " + description.getMethodName());
+        public void testStarted(Description description) {
+            stdOut.append("  ").append(description.getMethodName());
             failure = null;
             ignored = false;
         }
@@ -256,8 +166,16 @@ public class RunTests {
                 stdOut.println(" 🙈");
             } else if (failure != null) {
                 stdOut.println(" ❌");
-                if (fileLogger != null) {
-                    fileLogger.writeErrorLog(description.getTestClass(), description.getMethodName(), failure);
+                if (logPath != null) {
+                    Path logPath = Files.createDirectories(
+                            this.logPath.resolve(description.getTestClass().getSimpleName())
+                                    .resolve(description.getMethodName())
+                    );
+                    Files.writeString(
+                            logPath.resolve("error.log"),
+                            failure.getTrace(),
+                            StandardCharsets.UTF_8
+                    );
                 } else {
                     stdOut.println(failure.getTrimmedTrace());
                 }
