@@ -18,10 +18,8 @@
  */
 package com.datadobi.s3test;
 
-import com.datadobi.s3test.s3.Config;
-import com.datadobi.s3test.s3.S3TestBase;
-import com.datadobi.s3test.s3.ServiceDefinition;
-import com.datadobi.s3test.s3.WireLogger;
+import com.datadobi.s3test.s3.*;
+import com.google.common.collect.ImmutableSet;
 import org.junit.runner.Description;
 import org.junit.runner.JUnitCore;
 import org.junit.runner.manipulation.Filter;
@@ -57,8 +55,8 @@ public class RunTests {
 
             switch (arg) {
                 case "-c", "--config" -> configPath = Path.of(args[++i]);
-                case "-e", "--exclude" -> exclude.add(Pattern.compile(args[++i]));
-                case "-i", "--include" -> include.add(Pattern.compile(args[++i]));
+                case "-e", "--exclude" -> exclude.add(Pattern.compile(args[++i], Pattern.CASE_INSENSITIVE));
+                case "-i", "--include" -> include.add(Pattern.compile(args[++i], Pattern.CASE_INSENSITIVE));
                 case "-l", "--log" -> logPath = Path.of(args[++i]);
             }
         }
@@ -88,6 +86,13 @@ public class RunTests {
         S3TestBase.DEFAULT_SERVICE = target;
 
         System.out.println("S3 tests: " + target.host());
+        List<String> quirks = target.quirks().stream().map(Quirk::toString).sorted().toList();
+        if (!quirks.isEmpty()) {
+            System.out.println("Quirks: ");
+            for (var quirk : quirks) {
+                System.out.println("  " + quirk);
+            }
+        }
         System.out.println();
 
         List<Class<?>> classes = new ArrayList<>();
@@ -172,6 +177,13 @@ public class RunTests {
 
         public void testIgnored(Description description) {
             ignored = true;
+            this.failure = null;
+        }
+
+        @Override
+        public void testAssumptionFailure(Failure failure) {
+            ignored = true;
+            this.failure = failure;
         }
 
         @Override

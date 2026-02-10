@@ -61,13 +61,16 @@ public class S3TestBase {
 
     private Description currentTest;
 
-    @Rule
+    @Rule(order = 0)
     public TestWatcher testName = new TestWatcher() {
         @Override
         protected void starting(Description description) {
             S3TestBase.this.currentTest = description;
         }
     };
+
+    @Rule(order = 1)
+    public SkipForQuirksRule skipForQuirksRule = new SkipForQuirksRule();
 
     protected final ServiceDefinition target;
     protected S3Client s3;

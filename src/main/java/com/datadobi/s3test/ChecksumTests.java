@@ -18,7 +18,9 @@
  */
 package com.datadobi.s3test;
 
+import com.datadobi.s3test.s3.Quirk;
 import com.datadobi.s3test.s3.S3TestBase;
+import com.datadobi.s3test.s3.SkipForQuirks;
 import com.datadobi.s3test.util.DummyInputStream;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -36,26 +38,31 @@ public class ChecksumTests extends S3TestBase {
     }
 
     @Test
+    @SkipForQuirks({Quirk.CHECKSUMS_NOT_SUPPORTED})
     public void testCRC32() {
         putWithChecksum(ChecksumAlgorithm.CRC32);
     }
 
     @Test
+    @SkipForQuirks({Quirk.CHECKSUMS_NOT_SUPPORTED})
     public void testCRC32_C() {
         putWithChecksum(ChecksumAlgorithm.CRC32_C);
     }
 
     @Test
+    @SkipForQuirks({Quirk.CHECKSUMS_NOT_SUPPORTED})
     public void testSHA1() {
         putWithChecksum(ChecksumAlgorithm.SHA1);
     }
 
     @Test
+    @SkipForQuirks({Quirk.CHECKSUMS_NOT_SUPPORTED})
     public void testSHA256() {
         putWithChecksum(ChecksumAlgorithm.SHA256);
     }
 
     @Test
+    @SkipForQuirks({Quirk.CHECKSUMS_NOT_SUPPORTED})
     @Ignore("Requires C runtime")
     public void testCRC64_NVME() {
         putWithChecksum(ChecksumAlgorithm.CRC64_NVME);
@@ -93,6 +100,7 @@ public class ChecksumTests extends S3TestBase {
     }
 
     @Test
+    @SkipForQuirks({Quirk.CHECKSUMS_NOT_SUPPORTED})
     public void indefiniteLengthWithChecksum() {
         String key = "foo";
         bucket.putObject(
