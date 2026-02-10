@@ -19,7 +19,7 @@
 package com.datadobi.s3test;
 
 import com.datadobi.s3test.s3.S3TestBase;
-import org.junit.Assume;
+import com.datadobi.s3test.s3.SkipForQuirks;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -130,9 +130,8 @@ public class PutObjectTests extends S3TestBase {
     }
 
     @Test
+    @SkipForQuirks({CONTENT_TYPE_NOT_SET_FOR_KEYS_WITH_TRAILING_SLASH})
     public void canSetContentTypeOnEmptyObjectWithKeyContainingTrailingSlash() throws IOException {
-
-        Assume.assumeFalse(target.hasQuirk(CONTENT_TYPE_NOT_SET_FOR_KEYS_WITH_TRAILING_SLASH));
 
         var data = new byte[0];
 
